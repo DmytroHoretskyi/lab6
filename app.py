@@ -1,6 +1,7 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
+from marshmallow import fields, validate, exceptions
 
 
 app = Flask(__name__)
@@ -15,9 +16,9 @@ ma = Marshmallow(app)
 
 class Travels(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    price = db.Column(db.Integer, unique=False)
-    name = db.Column(db.String(100))
-    producer = db.Column(db.String(100))
+    price = db.Column(db.Float, unique=False)
+    name = db.Column(db.String(80), unique=False)
+    producer = db.Column(db.String(80), unique=False)
 
     def __init__(self, price, name, producer):
         self.price = price
@@ -25,26 +26,37 @@ class Travels(db.Model):
         self.producer = producer
 
 
-class TravelShcema(ma.Schema):
-    class Meta:
-        fields = ("price", "name", "producer")
+def get_travel_by_id(id):
+    travel = Travels.query.get(id)
+    if travel is None:
+        return abort(404)
+    return travel
 
 
-travel_schema = TravelShcema()
-travels_schema = TravelShcema(many=True)
+@app.errorhandler(exceptions.ValidationError)
+def handle_exception(e):
+    return e.messages, 400
+
+
+class TravelSchema(ma.Schema):
+    price = fields.Float(validate=validate.Range(min=0))
+    name = fields.String(validate=validate.Length(max=80))
+    producer = fields.String(validate=validate.Length(max=80))
+
+
+travel_schema = TravelSchema()
+travels_schema = TravelSchema(many=True)
 
 
 @app.route('/post', methods=['POST'])
 def add_post():
-    price = request.json['price']
-    name = request.json['name']
-    producer = request.json['producer']
+    fields = travel_schema.load(request.json)
+    new_travel = Travels(**fields)
 
-    my_posts = Travels(price, name, producer)
-    db.session.add(my_posts)
+    db.session.add(new_travel)
     db.session.commit()
 
-    return travel_schema.jsonify(my_posts)
+    return travel_schema.jsonify(new_travel)
 
 
 @app.route('/get', methods=['GET'])
@@ -57,21 +69,15 @@ def get_post():
 
 @app.route('/get/<id>/', methods=['GET'])
 def travel_details(id):
-    travel = Travels.query.get(id)
+    travel = get_travel_by_id(id)
     return travel_schema.jsonify(travel)
 
 
 @app.route('/post_update/<id>', methods=['PUT'])
 def post_update(id):
-    post = Travels.query.get(id)
-
-    price = request.json['price']
-    name = request.json['name']
-    producer = request.json['producer']
-
-    post.price = price
-    post.name = name
-    post.producer = producer
+    post = get_travel_by_id(id)
+    fields = travel_schema.load(request.json)
+    post.update(**fields)
 
     db.session.commit()
     return travel_schema.jsonify(post)
@@ -79,7 +85,8 @@ def post_update(id):
 
 @app.route('/post_delete/<id>', methods=['DELETE'])
 def post_delete(id):
-    post = Travels.query.get(id)
+    post = get_travel_by_id(id)
+
     db.session.delete(post)
     db.session.commit()
 
